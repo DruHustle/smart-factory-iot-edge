@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# PlatformIO
+.pio/
+.vscode/
+
+# Local config
+esp32-wrover/include/config.h
