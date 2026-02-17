@@ -108,3 +108,4 @@ __pycache__/
 
 # Local config
 esp32-wrover/include/config.h
+.DS_Store
