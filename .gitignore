@@ -1,3 +1,101 @@
+# --- Dependencies ---
+**/node_modules/
+.pnpm-store/
+.npm/
+jspm_packages/
+.yarn-integrity/
+
+# --- Build & Output ---
+dist/
+build/
+out/
+.out/
+.storybook-out/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+*.dist
+*.tgz
+*.tsbuildinfo
+# Standard binary/build folders
+[Dd]ebug/
+[Rr]elease/
+[Bb]in/
+[Oo]bj/
+*.obj
+*.pdb
+
+# --- Environment & Secrets ---
+.env
+.env.*
+!.env.example
+secrets.json
+*.pem
+
+# --- Logs & Runtime ---
+[Ll]og/
+[Ll]ogs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+pids
+*.pid
+*.seed
+*.pid.lock
+.node_repl_history
+
+# --- IDE & Editors ---
+.idea/
+.vscode/
+# Allow specific VS Code shared configs for team consistency
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+*.swp
+*.swo
+*~
+*.suo
+*.user
+
+# --- Testing & Coverage ---
+coverage/
+*.lcov
+.nyc_output
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# --- Database ---
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+!*.seed.sql
+mysql-data/
+.phpmyadmin/
+
+# --- OS Specific ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# --- Miscellaneous Tooling ---
+.eslintcache
+.rpt2_cache/
+.rts2_cache_*/
+.dockerignore
+*.orig
+*.bak
+
 # Python
 __pycache__/
 *.pyc
