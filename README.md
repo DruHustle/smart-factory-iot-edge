@@ -41,6 +41,67 @@ This repo contains:
 2. Configure Raspberry Pi gateway from `raspberry-pi/README.md`.
 3. Confirm telemetry appears on your broker and backend.
 
+## Load Code Onto Devices
+
+### ESP32 WROVER (flash firmware)
+
+1. Connect the ESP32 board to your computer with USB.
+2. Create board config:
+
+```bash
+cd esp32-wrover
+cp include/config.example.h include/config.h
+# edit include/config.h with Wi-Fi and MQTT settings
+```
+
+3. Build and upload firmware:
+
+```bash
+pio run -t upload
+```
+
+4. Verify boot logs:
+
+```bash
+pio device monitor
+```
+
+### Raspberry Pi (deploy gateway)
+
+1. Copy code to the device:
+
+```bash
+rsync -av --delete ./ raspberrypi@<PI_IP>:/opt/smart-factory-iot-edge/
+```
+
+2. SSH into the Pi and install runtime:
+
+```bash
+ssh raspberrypi@<PI_IP>
+cd /opt/smart-factory-iot-edge/raspberry-pi
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# edit .env with device and broker settings
+```
+
+3. Run once interactively:
+
+```bash
+python src/sensor_gateway.py
+```
+
+4. Enable startup service:
+
+```bash
+sudo cp systemd/smart-factory-edge.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable smart-factory-edge
+sudo systemctl restart smart-factory-edge
+sudo systemctl status smart-factory-edge
+```
+
 ## Security Notes
 
 - Use TLS-enabled MQTT in production.

@@ -136,17 +136,18 @@ def main():
     print("[EDGE] gateway started")
 
     while not STOP.is_set():
-        # If serial source is absent, publish synthetic telemetry for smoke tests.
-        synthetic = {
-            "temperature": 24.5,
-            "humidity": 55.0,
-            "vibration": 0.15,
-            "power": 120.0,
-            "pressure": 1.2,
-            "rpm": 1450,
-            "timestamp": int(time.time() * 1000),
-        }
-        publish_telemetry(synthetic)
+        # If serial ingest is disabled, publish synthetic telemetry for smoke tests.
+        if not settings.serial_enabled:
+            synthetic = {
+                "temperature": 24.5,
+                "humidity": 55.0,
+                "vibration": 0.15,
+                "power": 120.0,
+                "pressure": 1.2,
+                "rpm": 1450,
+                "timestamp": int(time.time() * 1000),
+            }
+            publish_telemetry(synthetic)
         STOP.wait(settings.publish_interval_seconds)
 
     client.loop_stop()

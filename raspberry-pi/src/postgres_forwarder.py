@@ -43,7 +43,7 @@ def main():
                 values (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    1,
+                    payload["deviceId"],
                     payload["temperature"],
                     payload["humidity"],
                     payload["vibration"],
