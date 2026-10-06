@@ -1,0 +1,16 @@
+# Replace the site, line, and device identifiers with the exact values in the
+# WROVER config and Pi environment file. Add one section per sensor.
+user smartfactory-gateway
+topic read factory/factory-a/line-1/+/telemetry
+topic read factory/factory-a/line-1/+/heartbeat
+# Enable only after GPIO outputs, driver polarity, external safety, and the
+# separate LOCAL_MQTT_CONTROL_DEVICE_IDS allowlist are commissioned.
+# topic write factory/factory-a/line-1/esp32-wrover-01/commands
+# topic read factory/factory-a/line-1/esp32-wrover-01/control-ack
+
+user esp32-wrover-01
+topic write factory/factory-a/line-1/esp32-wrover-01/telemetry
+topic write factory/factory-a/line-1/esp32-wrover-01/heartbeat
+# Enable only for a commissioned WROVER output device.
+# topic read factory/factory-a/line-1/esp32-wrover-01/commands
+# topic write factory/factory-a/line-1/esp32-wrover-01/control-ack

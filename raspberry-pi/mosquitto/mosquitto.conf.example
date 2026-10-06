@@ -1,0 +1,21 @@
+# Copy to /etc/mosquitto/conf.d/smart-factory.conf after reviewing addresses.
+# There is deliberately no wildcard/default listener: Python uses loopback,
+# while OT devices use the Pi's fixed, firewall-restricted OT address.
+per_listener_settings true
+allow_anonymous false
+persistence true
+persistence_location /var/lib/mosquitto/
+autosave_interval 30
+max_queued_messages 1000
+max_queued_bytes 16777216
+
+listener 1883 127.0.0.1
+password_file /etc/mosquitto/smart-factory/passwd
+acl_file /etc/mosquitto/smart-factory/acl
+
+listener 8883 192.0.2.10
+certfile /etc/mosquitto/smart-factory/certs/pi-gateway-chain.pem
+keyfile /etc/mosquitto/smart-factory/certs/pi-gateway-key.pem
+tls_version tlsv1.2
+password_file /etc/mosquitto/smart-factory/passwd
+acl_file /etc/mosquitto/smart-factory/acl

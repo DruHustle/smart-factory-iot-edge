@@ -1,16 +1,33 @@
 [Unit]
 Description=Smart Factory Edge Gateway
-After=network-online.target
+After=network-online.target mosquitto.service
 Wants=network-online.target
+Requires=mosquitto.service
 
 [Service]
 Type=simple
-User=pi
+User=smartfactory
+Group=smartfactory
+SupplementaryGroups=dialout
 WorkingDirectory=/opt/smart-factory-iot-edge/raspberry-pi
-EnvironmentFile=/opt/smart-factory-iot-edge/raspberry-pi/.env
-ExecStart=/usr/bin/python3 /opt/smart-factory-iot-edge/raspberry-pi/src/sensor_gateway.py
-Restart=always
-RestartSec=3
+EnvironmentFile=/etc/smart-factory-iot/edge.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/smart-factory-iot-edge/raspberry-pi/.venv/bin/python /opt/smart-factory-iot-edge/raspberry-pi/src/sensor_gateway.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+StateDirectory=smart-factory-iot
+StateDirectoryMode=0700
+Environment=EDGE_STATE_DIR=/var/lib/smart-factory-iot
 
 [Install]
 WantedBy=multi-user.target

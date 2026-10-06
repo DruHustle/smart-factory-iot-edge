@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "gatewayDeviceId": "pi-edge-01",
+  "assets": [
+    {
+      "assetId": "urn:example:asset:adeept:ADA031:001",
+      "assetName": "Adeept ADA031 5-DOF Robotic Arm",
+      "protocol": "ada031_v4_serial",
+      "endpoint": "serial:///dev/serial/by-id/REPLACE_WITH_DEVICE_ID?baudrate=9600",
+      "tagMappings": []
+    }
+  ]
+}

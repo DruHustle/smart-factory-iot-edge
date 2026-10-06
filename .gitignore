@@ -81,7 +81,6 @@ mysql-data/
 
 # --- OS Specific ---
 .DS_Store
-.DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
@@ -107,5 +106,7 @@ __pycache__/
 .vscode/
 
 # Local config
-esp32-wrover/include/config.h
-.DS_Store
+esp32-wrover/include/smart_factory_config.h
+
+# Private local durable telemetry and downloaded gateway profiles
+raspberry-pi/.state/

@@ -1,66 +1,197 @@
 # Raspberry Pi Edge Gateway
 
-Python edge gateway for Smart Factory telemetry.
+The Pi is the plant edge gateway: it polls industrial machines over OPC UA, Modbus TCP/RTU, and serial JSON, exchanges validated control and controller telemetry with commissioned ADA031 V4 arms over 9600-baud USB serial, and hosts a local Mosquitto broker for ESP32 sensors. The Python process validates local sensor identity and payloads, then publishes telemetry to CloudAMQP over TLS. Eligible native MQTT devices may publish directly to CloudAMQP with their own scoped credentials and topic ACLs. The ADA031 V4 uses USB serial and must use the Pi gateway. Backend services use separate scoped identities. See the [ADA031 V4 guide](../docs/ada031-integration.md) for the command map and limits.
 
-## Features
+Gateway dependencies and their resolved transitive versions are pinned in `requirements.txt`; `requirements.in` records the direct dependencies. Edge CI and the coordinated release run `pip-audit==2.10.1` with `--strict` and fail on known vulnerabilities. Review dependency updates together, rerun the audit and gateway tests, and verify wheel availability on the commissioned Pi architecture. The application audit does not scan the installed Pi OS.
 
-- MQTT telemetry publish
-- MQTT command subscribe
-- Serial ingest from attached MCU (ESP32/other)
-- Heartbeat publishing
-- Optional PostgreSQL direct forward script
+## Relationship to the cloud deployment
 
-## Requirements
+The React UI runs on Vercel, and the Node API plus Device, Telemetry, Identity, Analytics and Notification services share one non-root Render container. Managed databases, Redis, messaging and company AAS services remain external. The Raspberry Pi stays in the factory and runs the systemd service below. ESP32 WROVER firmware is built and uploaded over USB with PlatformIO; the ADA031 V4 controller uses its USB/Arduino workflow. The Pi publishes upstream to CloudAMQP MQTT over TLS using its own gateway identity. See the dashboard's [local and Vercel/Render guide](https://github.com/DruHustle/smart-factory-iot/blob/main/RENDER_DEPLOYMENT.md) and the edge [deployment index](../README.md). Kubernetes is unnecessary.
 
-1. Raspberry Pi OS (or Linux)
-2. Python 3.10+
-3. Network access to MQTT broker
-4. Optional USB serial link to MCU
+## Manual install
 
-## Setup
-
-1. Create virtual environment:
+Use Raspberry Pi OS 64-bit with Python 3.11, the tested runtime. Revalidate dependencies and gateway tests before selecting a newer Python version. From this directory:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-2. Configure env:
-
-```bash
+.venv/bin/pip install -r requirements.txt
 cp .env.example .env
-# edit .env values
+# Configure broker identity, certificates, and equipment mappings.
+chmod 600 .env
+.venv/bin/python src/sensor_gateway.py
 ```
 
-3. Run gateway:
+The Pi CloudAMQP uplink uses MQTT TLS on port 8883. Paho validates the broker certificate and hostname with the OS CA store; set `MQTT_CA_CERT` for a protected private CA. WROVER devices use the Pi local Mosquitto TLS listener on port 8883; its separate loopback listener on port 1883 is only for Python. Never turn off verification or use plaintext MQTT on a plant/public network.
+
+## Configure local Mosquitto ingress for WROVER
+
+Set up the Pi broker before flashing ESP32 firmware. Install Mosquitto and chrony, assign the Pi a stable OT-network address, and create a DNS record such as `pi-gateway.ot.example` that resolves to that address. The TLS certificate must contain that exact DNS name in its Subject Alternative Name. Use certificates from the plant PKI or an approved private CA; do not ship the broker private key to a sensor.
 
 ```bash
-python src/sensor_gateway.py
+sudo apt update
+sudo apt install -y mosquitto mosquitto-clients chrony
+sudo install -d -o root -g mosquitto -m 0750 /etc/mosquitto/smart-factory/certs
+sudo install -d -o root -g mosquitto -m 0750 /etc/mosquitto/smart-factory
+sudo install -o root -g root -m 0644 mosquitto/mosquitto.conf.example /etc/mosquitto/conf.d/smart-factory.conf
+sudo install -o root -g root -m 0640 mosquitto/acl.example /etc/mosquitto/smart-factory/acl
 ```
 
-## Using Systemd
-
-1. Copy project to `/opt/smart-factory-iot-edge/raspberry-pi`
-2. Copy unit file:
+Edit `smart-factory.conf` and replace `192.0.2.10` with the Pi's fixed OT address. Install the approved CA chain, Pi server certificate, and private key under the configured cert directory. The certificate needs a DNS SAN for the firmware's `MQTT_HOST`; keep its private key root-owned and readable only by Mosquitto. Create password entries interactively so secrets do not enter shell history:
 
 ```bash
-sudo cp systemd/smart-factory-edge.service /etc/systemd/system/
+sudo mosquitto_passwd -c /etc/mosquitto/smart-factory/passwd smartfactory-gateway
+sudo mosquitto_passwd /etc/mosquitto/smart-factory/passwd esp32-wrover-01
+sudo chown root:mosquitto /etc/mosquitto/smart-factory/passwd /etc/mosquitto/smart-factory/acl
+sudo chmod 0640 /etc/mosquitto/smart-factory/passwd /etc/mosquitto/smart-factory/acl
+sudo systemctl enable --now mosquitto
+sudo systemctl status mosquitto
+```
+
+Use [mosquitto.conf.example](mosquitto/mosquitto.conf.example) and [acl.example](mosquitto/acl.example) as templates. Verify the ACL topic paths exactly match `SITE_ID`, `LINE_ID`, and each device ID. By default, the gateway account reads sensor telemetry/heartbeat topics and each sensor account writes only its own telemetry/heartbeat topics. GPIO command and acknowledgement ACL entries are commented out; enable the exact device topics only after that WROVER and its isolated driver wiring have been commissioned. Keep port 8883 reachable only from the OT VLAN, keep port 1883 bound to loopback, and firewall all sensor internet/cloud egress. The Python subscriber enforces `LOCAL_MQTT_DEVICE_IDS`, topic scope, payload size, timestamp, and metric types as defense in depth. The separate `LOCAL_MQTT_CONTROL_DEVICE_IDS` allowlist controls which telemetry devices may receive GPIO requests. The WROVER publishes QoS 1 and the Python subscriber uses a stable client ID with a persistent subscription; Mosquitto persistence can queue messages while the gateway process restarts. QoS 1 is at-least-once and consumers must tolerate duplicates.
+
+Configure the Pi as the permitted NTP source for the OT subnet using chrony (`allow <OT_SUBNET>` in `/etc/chrony/chrony.conf`) and permit UDP/123 only from that subnet. Keep the Pi's upstream time synchronization aligned with site policy. Configure the WROVER to use this gateway hostname as its NTP server so it can validate the broker's TLS certificate without reaching public NTP servers.
+
+Copy `.env.example` to `/etc/smart-factory-iot/edge.env` and keep `EDGE_ENV=production`; this makes the service reject a plaintext or unauthenticated cloud uplink. Set the CloudAMQP MQTT endpoint/credentials for `MQTT_*`, the local gateway account for `LOCAL_MQTT_*`, and the exact comma-separated `LOCAL_MQTT_DEVICE_IDS`. Keep `LOCAL_MQTT_CONTROL_DEVICE_IDS` empty until a WROVER output and its external driver have been commissioned; when enabled, this list must be a subset of `LOCAL_MQTT_DEVICE_IDS`. CloudAMQP values are taken from the instance console: use its MQTT TLS hostname, port 8883, and a dedicated gateway identity with publish access to its own telemetry/heartbeat/ack topics plus the allowlisted sensor telemetry/heartbeat topics that it forwards, and subscribe access only to that gateway's commands topic. Backend consumers and DeviceService need their own least-privilege identities. Never copy cloud values to a WROVER. See [CloudAMQP MQTT setup](https://www.cloudamqp.com/docs/mqtt.html). `LOCAL_MQTT_HOST=127.0.0.1` and port 1883 are intentional because the Python process uses the loopback-only listener.
+
+## systemd install
+
+Use a dedicated unprivileged `smartfactory` service account. Keep secrets under `/etc/smart-factory-iot/`, owned by root and readable only by the service group. The unit uses the app's virtual environment, `dialout` for serial hardware, and systemd hardening.
+
+```bash
+sudo useradd --system --home-dir /opt/smart-factory-iot-edge --shell /usr/sbin/nologin --groups dialout smartfactory
+sudo install -d -o smartfactory -g smartfactory -m 0750 /opt/smart-factory-iot-edge/raspberry-pi
+sudo -u smartfactory python3 -m venv /opt/smart-factory-iot-edge/raspberry-pi/.venv
+sudo -u smartfactory /opt/smart-factory-iot-edge/raspberry-pi/.venv/bin/pip install -r /opt/smart-factory-iot-edge/raspberry-pi/requirements.txt
+sudo install -d -o root -g smartfactory -m 0750 /etc/smart-factory-iot
+sudo install -o root -g smartfactory -m 0640 .env /etc/smart-factory-iot/edge.env
+sudo install -o root -g smartfactory -m 0640 systemd/smart-factory-edge.service /etc/systemd/system/smart-factory-edge.service
 sudo systemctl daemon-reload
-sudo systemctl enable smart-factory-edge
-sudo systemctl start smart-factory-edge
+sudo systemctl enable --now smart-factory-edge
 sudo systemctl status smart-factory-edge
 ```
 
-## MQTT Topics
+Check logs with `journalctl -u smart-factory-edge -n 100 --no-pager`. If the account already exists, retain its current ownership/group configuration.
 
-- Telemetry: `factory/{site}/{line}/{deviceId}/telemetry`
-- Heartbeat: `factory/{site}/{line}/{deviceId}/heartbeat`
-- Commands: `factory/{site}/{line}/{deviceId}/commands`
+## Safe Pi code upload
 
-## Production Guidance
+Run from the edge repository root on your development computer. Review the dry-run, then upload Pi code into a staging directory. Never use `rsync --delete`:
 
-- Enable TLS (`MQTT_USE_TLS=true`) and authenticated broker users.
-- Restrict publish/subscribe ACLs by topic.
-- Prefer backend-mediated DB writes instead of direct edge-to-Postgres writes.
+```bash
+ssh DEPLOY_USER@PI_IP 'mkdir -p /tmp/smart-factory-edge/raspberry-pi'
+rsync -av --dry-run --exclude='.env' --exclude='*.env' --exclude='.venv/' --exclude='__pycache__/' --exclude='*.pyc' --exclude='.DS_Store' raspberry-pi/ DEPLOY_USER@PI_IP:/tmp/smart-factory-edge/raspberry-pi/
+rsync -av --exclude='.env' --exclude='*.env' --exclude='.venv/' --exclude='__pycache__/' --exclude='*.pyc' --exclude='.DS_Store' raspberry-pi/ DEPLOY_USER@PI_IP:/tmp/smart-factory-edge/raspberry-pi/
+```
+
+On the Pi, copy staged source over the installed source; this leaves its `.env` and `.venv` intact:
+
+```bash
+sudo cp -a /tmp/smart-factory-edge/raspberry-pi/. /opt/smart-factory-iot-edge/raspberry-pi/
+sudo chown -R smartfactory:smartfactory /opt/smart-factory-iot-edge/raspberry-pi/src
+sudo systemctl restart smart-factory-edge
+sudo journalctl -u smart-factory-edge -n 100 --no-pager
+```
+
+Back up `/etc/smart-factory-iot/edge.env`, Mosquitto credentials/ACLs and certificates, chrony configuration, and machine profile separately. The rsync steps transfer only Python gateway source; they do not configure the broker or provision sensor firmware.
+
+## Industrial protocols
+
+Download the gateway JSON profile from an asset's AAS page and install it at `ASSET_CONFIG_FILE` (default `/var/lib/smart-factory-iot/assets.json`) as `smartfactory:smartfactory`, mode `0600` in the private state directory. It contains gateway endpoints and mappings, never passwords. Direct MQTT assets are omitted from the Pi profile and publish with device-scoped broker credentials.
+
+Generic standalone serial ingest is opt-in (`SERIAL_ENABLED=false` by default). Leave it disabled when the USB device is represented by an AAS `serial`, `modbus_rtu`, or `ada031_v4_serial` profile. When it is required for a separate line-delimited JSON sensor, configure its own stable `/dev/serial/by-id/...` path. The gateway resolves stable symlinks and kernel aliases to one physical path, rejects duplicate serial owners in a profile, and synchronizes profile changes with port opens.
+
+- **OPC UA:** Secure channel is required by default. Configure policy, `SignAndEncrypt`, trusted server certificate, client certificate/key, and optional username/password. `OPCUA_ALLOW_INSECURE=true` is restricted to isolated lab use.
+- **Modbus TCP/RTU:** Current adapter has no encryption. Keep it inside an isolated OT VLAN or use an authenticated encrypted tunnel and firewall allowlists. Do not expose port 502 publicly.
+- **Serial JSON:** Restrict device access to the service account and verify payload sources. Use a stable path under `/dev/serial/by-id/`; the Pi keeps telemetry ports open between polls.
+- **ADA031 V4 USB serial:** Use protocol `ada031_v4_serial` at 9600 baud. The edge supports the vendor jog bytes and connected-firmware profile (`P`/`D`), neutral (`N`) and program-stop (`S`) bytes. The same synchronized serial owner reads validated controller JSON and forwards it as AAS `assetSignals`. These are commanded targets and counters, not measured joint feedback. The first USB open can reset the Uno and move all five axes to the firmware's 90° startup pose. Opening and control are disabled unless the exact AAS ID is listed in `ADA031_CONTROL_ASSET_IDS`; follow [the ADA031 guide](../docs/ada031-integration.md).
+
+Validate NodeIds, namespace URIs, register offsets, data types, byte/word order, scale, and engineering units against vendor documents. MQTT topics are `factory/{site}/{line}/{deviceId}/telemetry`, `/heartbeat`, and `/commands`. Industrial protocols terminate at the Pi; WROVER sensor topics terminate at the local Pi broker. The Pi publishes validated gateway telemetry and subscribes only to its own command topic. Direct MQTT devices publish to their own CloudAMQP topic using separate credentials and publish-only ACLs. Apply per-device ACLs at both brokers.
+
+## Troubleshooting and tests
+
+- MQTT TLS: confirm UTC clock, hostname, CA, port, broker account, and topic ACL.
+- OPC UA: confirm server policy, certificate trust, key permissions, endpoint and credentials.
+- Serial permission: check the `dialout` group and restart after group changes.
+- Readings missing: inspect `journalctl`, profile mappings, units/scaling, and broker/backend logs.
+
+### DHT11 telemetry does not reach the dashboard
+
+Trace one real sample through each boundary; do not replace a missing sensor value with synthetic data.
+
+1. Open the ESP-WROVER serial monitor at 115200 baud. A healthy startup reports `[DHT11] Sensor initialized`, Wi-Fi connected, the time-sync wait, and `[MQTT] Connected to Pi gateway`. Every five seconds it should report `[PUB] QoS 1 telemetry acknowledged by Pi broker` with `sensorStatus:"ok"`. A `read_error` record proves MQTT works but the DHT read failed; check the reviewed GPIO32/33 data pin, sensor power/ground and the required pull-up.
+2. If startup remains at the time-sync message, verify the Pi chrony service, OT firewall UDP/123, `NTP_SERVER_1`, DNS/mDNS resolution and the Pi clock. TLS MQTT deliberately does not start before the WROVER has valid UTC.
+3. If MQTT connection fails, verify that the WROVER uses the Pi's OT hostname/address and TLS listener 8883, that the certificate SAN matches that hostname, and that its device-specific Mosquitto username and ACL match the exact `SITE_ID`, `LINE_ID` and `DEVICE_ID`.
+4. On the Pi, confirm both services and follow the ingress log:
+
+   ```bash
+   sudo systemctl status mosquitto smart-factory-edge --no-pager
+   sudo journalctl -u mosquitto -u smart-factory-edge -f
+   ```
+
+   Each accepted sample produces `[LOCAL MQTT] telemetry queued -> factory/.../esp32-wrover-01/telemetry`. A rejection means the topic identity, configured `LOCAL_MQTT_DEVICE_IDS`, payload schema or value range does not match. No ingress line after a WROVER publish acknowledgement points to the local broker/session configuration.
+5. If the Pi queues the local sample but the dashboard remains empty, verify the cloud MQTT connection/ACL and durable queue logs, then the backend MQTT consumer and dashboard telemetry-ingestion service. Keep `DEVICE_ID=pi-edge-01` for the gateway and `LOCAL_MQTT_DEVICE_IDS=esp32-wrover-01` for the sensor; they are intentionally different identities.
+
+Relative humidity outside 0–100%, non-finite readings, unknown fields, mismatched IDs and oversized payloads are rejected at the gateway. With `sensorStatus:"read_error"`, temperature and humidity are intentionally absent while the heartbeat and button signals continue, which distinguishes a DHT wiring/read problem from a network problem.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s raspberry-pi/tests -v
+```
+
+
+## Live AAS edge profile updates
+
+The gateway cloud client subscribes to `factory/{SITE_ID}/{LINE_ID}/{DEVICE_ID}/commands`. DeviceService publishes a retained QoS 1 `replace_asset_configuration` desired-state command; the gateway validates `schemaVersion` and `gatewayDeviceId`, atomically persists `/var/lib/smart-factory-iot/assets.json` (mode 0600), and reloads the active polling loop. A status acknowledgement is published to the command topic with `/ack` appended. The broker must enforce a per-device topic ACL and TLS; the service response means the broker accepted the publish, not that the edge host applied it.
+
+For commissioned WROVER outputs only, the gateway also accepts a non-retained `set_gpio` command containing `schemaVersion`, `commandId`, `targetDeviceId`, `pin`, `value`, `holdMs`, and `expiresAt`. It checks the separate control-device allowlist, pin 18 or 19, a pulse of at most two seconds, and expiry within 30 seconds, then relays it to that WROVER's local `commands` topic. The WROVER returns an acknowledgement on `control-ack`; the Pi forwards it to the gateway cloud `/commands/ack` topic. A gateway `queued` acknowledgement means the local broker accepted the pulse; only a WROVER `applied` acknowledgement means the GPIO changed. Neither acknowledgement proves the machine acted. The Smart Factory dashboard does not currently expose this GPIO command; use is disabled until a role-authorized application control API/UI is connected and the machine-specific output has been commissioned.
+
+The AAS UI publishes ADA031 jog, profile, neutral and program-stop requests only to engineers and admins using a short-lived signed role token; DeviceService checks that role again. Commands identify the AAS asset, expire within 30 seconds, are never retained, and are limited by the Pi to one per 200 ms except the stop request. The exact asset ID must also appear in `ADA031_CONTROL_ASSET_IDS`. Only fixed actions are translated to one firmware byte. The gateway acknowledgement confirms a serial write only; connected-firmware telemetry reports controller state and commanded targets, not physical movement. Its profile is separate from generic Serial JSON polling.
+
+The profile supports validated OPC UA, Modbus TCP/RTU, serial JSON, MQTT mappings, and ADA031 V4 control profiles. Do not put passwords, private keys, or user information in endpoints or mappings. Configure protocol secrets locally on the gateway. Offline desired-state is retained, so make sure broker ACLs restrict retained configuration publication and gateway subscription to the exact device topic. WROVER pulses and ADA031 motion commands are never retained.
+
+
+## Complete local three-repository test
+
+For a workstation integration run, start services in this order from separate terminals:
+
+```bash
+# Dashboard repository: PostgreSQL, Redis, Nginx, BaSyx repositories and registries
+cd ../smart-factory-iot
+docker compose --profile aas up -d --build --wait
+
+# Backend repository: backend PostgreSQL, RabbitMQ (AMQP/MQTT), and .NET services
+cd ../smart-factory-iot-backend
+docker compose up -d --build --wait
+
+# Edge repository: run the gateway simulator from raspberry-pi/
+cd ../smart-factory-iot-edge/raspberry-pi
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python src/sensor_gateway.py
+```
+
+Before starting the local Python simulator, replace the production-only values in its ignored `.env` with this workstation profile (keep broker credentials matched to the backend `.env`):
+
+```dotenv
+EDGE_ENV=development
+MQTT_HOST=127.0.0.1
+MQTT_PORT=1883
+MQTT_USE_TLS=false
+MQTT_USERNAME=YOUR_LOCAL_BACKEND_BROKER_USER
+MQTT_PASSWORD=YOUR_LOCAL_BACKEND_BROKER_PASSWORD
+LOCAL_MQTT_ENABLED=false
+SERIAL_ENABLED=false
+SYNTHETIC_TELEMETRY_ENABLED=true
+ASSET_CONFIG_FILE=./.state/assets.json
+EDGE_STATE_DIR=./.state
+```
+
+The local workstation profile uses the backend repository MQTT listener at 127.0.0.1:1883 with TLS disabled, serial polling disabled, and synthetic telemetry enabled. Do not enable the Pi `LOCAL_MQTT_*` production path for this workstation test unless a local Mosquitto listener and test ACLs have been configured. The MQTT username/password must match the backend broker settings. This profile is only for an isolated local test; do not copy it to a Raspberry Pi or connect it to a plant network. For a fresh checkout, create each repository's ignored .env from its .env.example and set the shared JWT, AAS provisioning, Redis, telemetry-ingestion, and MQTT values consistently. Keep secrets out of source control.
+
+## Durable delivery and writable gateway state
+
+The systemd unit creates `/var/lib/smart-factory-iot` with mode 0700 using `StateDirectory`. Store `assets.json` there; `/etc/smart-factory-iot/edge.env` and certificates remain root-owned, read-only secrets. Existing installations must change `ASSET_CONFIG_FILE` in the protected environment file and migrate their profile before restarting. This allows atomic MQTT profile updates under `ProtectSystem=strict` without granting write access to credentials.
+
+`EDGE_STATE_DIR` enables a SQLite queue for normalized telemetry. The gateway records samples before cloud publication, retries after reconnect/restart, and removes them only after MQTT QoS 1 acknowledgement. The queue defaults to 50,000 messages (`MAX_QUEUED_MESSAGES`) and accepts at most 16 KiB per message. Watch queue depth, free disk and uplink logs; a full queue reports an error and cannot buffer additional samples. Broker acknowledgement means the cloud broker accepted the message, not dashboard persistence. Backend and dashboard deduplicate retries. Pi-local QoS 1 sensor sessions buffer short gateway process outages; a gateway/storage failure or prolonged queue exhaustion still requires operational recovery.
+
+The same private database reserves ADA031 command IDs before serial writes. Replayed IDs cannot reopen the controller or cause another jog after a process restart. Reservation happens before USB-open because opening the port can itself trigger the vendor startup pose. A crash between reservation and write is an ambiguous result: inspect the equipment instead of blindly retrying movement. Protocol control remains subject to the commissioned allowlist, expiry and rate limit.
+
+The dashboard repository also provides `pnpm e2e:system`: a disposable real-service MQTT/telemetry test with simulated serial hardware. Run it from a Python environment containing the edge dependencies. Bench commissioning, power-cut recovery, cloud ACL/TLS testing and OTA acceptance remain separate physical/deployment checks.
