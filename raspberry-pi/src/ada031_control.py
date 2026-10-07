@@ -178,6 +178,14 @@ class Ada031SerialCommandManager:
         self._ports[asset["assetId"]] = (endpoint, port)
         return port
 
+    def _discard_port(self, asset_id: str) -> None:
+        existing = self._ports.pop(asset_id, None)
+        if existing is not None:
+            try:
+                existing[1].close()
+            except Exception:
+                pass
+
     def execute(self, asset: dict, command: dict, command_byte: bytes) -> dict:
         with self._lock:
             asset_id = asset["assetId"]
@@ -208,10 +216,17 @@ class Ada031SerialCommandManager:
             # Reserve before writing even without disk state, so an ambiguous write
             # or flush failure cannot trigger a blind second motion.
             self._seen_commands[command_id] = now
-            written = port.write(command_byte)
-            if written != 1:
-                raise RuntimeError("ADA031 serial controller did not accept the command byte")
-            port.flush()
+            try:
+                written = port.write(command_byte)
+                if written != 1:
+                    raise RuntimeError("ADA031 serial controller did not accept the command byte")
+                port.flush()
+            except Exception:
+                # Never retry a motion write whose delivery is ambiguous. Drop
+                # the stale descriptor so the next distinct command or poll can
+                # reopen the stable /dev/serial/by-id path after USB recovery.
+                self._discard_port(asset_id)
+                raise
             self._last_command_at[asset_id] = now
             self._seen_commands[command_id] = now
             while len(self._seen_commands) > 256:
@@ -238,21 +253,25 @@ class Ada031SerialCommandManager:
                 del self._ports[asset_id]
             port = self._ports.get(asset_id, ("", None))[1] or self._open_port(asset)
             newest: dict[str, float] | None = None
-            for index in range(32):
-                if index > 0 and int(getattr(port, "in_waiting", 0)) <= 0:
-                    break
-                raw = port.readline()
-                if not raw:
-                    break
-                if len(raw) > MAX_SERIAL_RECORD_BYTES:
-                    raise ValueError("ADA031 telemetry record exceeds the supported size")
-                try:
-                    record = json.loads(raw.decode("utf-8", errors="strict").strip())
-                except (UnicodeDecodeError, json.JSONDecodeError):
-                    continue
-                normalized = normalize_telemetry(record)
-                if normalized is not None:
-                    newest = normalized
+            try:
+                for index in range(32):
+                    if index > 0 and int(getattr(port, "in_waiting", 0)) <= 0:
+                        break
+                    raw = port.readline()
+                    if not raw:
+                        break
+                    if len(raw) > MAX_SERIAL_RECORD_BYTES:
+                        raise ValueError("ADA031 telemetry record exceeds the supported size")
+                    try:
+                        record = json.loads(raw.decode("utf-8", errors="strict").strip())
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    normalized = normalize_telemetry(record)
+                    if normalized is not None:
+                        newest = normalized
+            except Exception:
+                self._discard_port(asset_id)
+                raise
             return {"assetSignals": newest} if newest is not None else {}
 
     def _expire_seen(self, now: float) -> None:

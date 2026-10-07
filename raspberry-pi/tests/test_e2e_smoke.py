@@ -758,6 +758,38 @@ class AssetAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "angle"):
             self.ada031.normalize_telemetry({"cycle_count": 1, "servo_1_deg": 999})
 
+    def test_ada031_telemetry_reopens_after_usb_descriptor_fails(self):
+        class FailingPort:
+            closed = False
+            def readline(self):
+                raise OSError("USB device disconnected")
+            def close(self):
+                self.closed = True
+
+        class RecoveredPort:
+            closed = False
+            in_waiting = 0
+            def readline(self):
+                return b'{"cycle_count":2,"movement_active":1}\n'
+            def close(self):
+                self.closed = True
+
+        ports = [FailingPort(), RecoveredPort()]
+        opened = []
+        manager = self.ada031.Ada031SerialCommandManager(
+            serial_factory=lambda *_args, **_kwargs: opened.append(ports[len(opened)]) or opened[-1],
+            sleeper=lambda _seconds: None,
+        )
+        asset = {"assetId": "urn:test:arm", "protocol": "ada031_v4_serial", "endpoint": "serial:///dev/ttyUSB1?baudrate=9600"}
+        with self.assertRaisesRegex(OSError, "disconnected"):
+            manager.read_telemetry(asset)
+        self.assertTrue(opened[0].closed)
+        recovered = manager.read_telemetry(asset)
+        self.assertEqual(recovered["assetSignals"]["cycle_count"], 2.0)
+        self.assertEqual(recovered["assetSignals"]["movement_active"], 1.0)
+        self.assertEqual(len(opened), 2)
+        manager.close()
+
     def test_ada031_serial_manager_writes_one_byte_after_one_controller_open(self):
         class FakePort:
             def __init__(self, *_args, **kwargs):

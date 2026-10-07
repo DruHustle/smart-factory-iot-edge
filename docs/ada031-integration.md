@@ -119,6 +119,8 @@ sudo journalctl -u smart-factory-edge -n 100 --no-pager
 
 The first connected-firmware telemetry poll opens the serial port. That open can reset the controller and execute its 90° startup writes before any UI command. Start with the arm secured, motion area clear, and independent power disconnect accessible. Never place hands in the work area while powered.
 
+If USB power loss or re-enumeration invalidates the serial descriptor, the gateway closes and discards it, then reopens the stable `/dev/serial/by-id/...` path on the next telemetry poll. A failed or ambiguous motion write is never automatically repeated. Recurrent USB over-current messages in `dmesg` remain a hardware problem: correct the supply, cable, hub, or wiring before operation.
+
 ## Safety and scope
 
 ADA031 is an educational hobby robotic arm, not a safety-rated industrial robot. The connected firmware reports controller targets and state, not physical servo feedback. Vendor code clamps, application role checks, MQTT delivery, and serial-write acknowledgements do not provide safety-rated stopping, guarding, speed monitoring, torque limitation, or position verification. Keep machine protective functions physically independent and complete an appropriate risk assessment before powered operation. Do not connect this setup to production machinery or people-facing motion without engineering validation and suitable independent safeguards.

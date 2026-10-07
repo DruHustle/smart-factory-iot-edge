@@ -106,6 +106,8 @@ Generic standalone serial ingest is opt-in (`SERIAL_ENABLED=false` by default). 
 
 Validate NodeIds, namespace URIs, register offsets, data types, byte/word order, scale, and engineering units against vendor documents. MQTT topics are `factory/{site}/{line}/{deviceId}/telemetry`, `/heartbeat`, and `/commands`. Industrial protocols terminate at the Pi; WROVER sensor topics terminate at the local Pi broker. The Pi publishes validated gateway telemetry and subscribes only to its own command topic. Direct MQTT devices publish to their own CloudAMQP topic using separate credentials and publish-only ACLs. Apply per-device ACLs at both brokers.
 
+If an ADA031 USB disconnect invalidates the open descriptor, the gateway closes it and reopens the stable by-id path on the next telemetry poll. It never blindly repeats an ambiguous motion write. Repeated kernel USB over-current events require a hardware power/cable correction.
+
 ## Troubleshooting and tests
 
 - MQTT TLS: confirm UTC clock, hostname, CA, port, broker account, and topic ACL.
