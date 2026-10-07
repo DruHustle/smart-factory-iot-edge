@@ -24,13 +24,13 @@ REPLACE_WITH_BROKER_ROOT_CA_CERTIFICATE
 #define LINE_ID "line-1"
 #define NTP_SERVER_1 "pi-gateway.ot.example" // Pi chrony serves time to the isolated OT network.
 
-// ESP-WROVER-KIT digital logic outputs. GPIO18/19 are shared with optional
-// camera/LCD connectors; disconnect those peripherals before using the pins.
-// These are 3.3 V logic outputs for isolated driver inputs, never direct loads.
+// GPIO18 is a 3.3 V logic output for an isolated driver input, never a direct load.
 #define CONTROL_GPIO_PIN_1 18
-#define CONTROL_GPIO_PIN_2 19
 #define CONTROL_GPIO_SAFE_LEVEL 0
 #define CONTROL_GPIO_MAX_HOLD_MS 2000
+
+// Dedicated button-state LED. GPIO19 drives a low-current LED through a resistor.
+#define BUTTON_LED_PIN 19
 
 // DHT11 data output; GPIO32 is available on the ESP-WROVER-KIT header.
 #define DHT11_DATA_PIN 32

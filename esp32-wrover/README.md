@@ -1,6 +1,6 @@
 # ESP32 WROVER Firmware
 
-The WROVER publishes physical DHT11 temperature and relative-humidity readings to the Pi's local Mosquitto broker over MQTT/TLS. It has two configurable, allowlisted digital control outputs on GPIO18 and GPIO19. It does not connect to CloudAMQP, the application database, Redis, or the internet; the Pi validates and forwards telemetry and relays short-lived output requests. For provider-side TLS guidance see [CloudAMQP MQTT setup](https://www.cloudamqp.com/docs/mqtt.html).
+The WROVER publishes physical DHT11 temperature, relative humidity, and button state to the Pi's local Mosquitto broker over MQTT/TLS. GPIO18 remains an allowlisted digital control output; GPIO19 is dedicated to the button-state LED. It does not connect to CloudAMQP, the application database, Redis, or the internet; the Pi validates and forwards telemetry and relays short-lived output requests. For provider-side TLS guidance see [CloudAMQP MQTT setup](https://www.cloudamqp.com/docs/mqtt.html).
 
 ## Configure, build, and upload
 
@@ -10,7 +10,7 @@ Install PlatformIO Core or its VS Code extension and the Espressif32 platform. C
 cp include/config.example.h include/smart_factory_config.h
 ```
 
-Edit the ignored `include/smart_factory_config.h` with the OT Wi-Fi SSID/password, the Pi gateway mDNS name (`smart-factory-gateway.local`) and TLS listener port (`8883`), a unique Mosquitto user/password, the CA that signed the Pi broker certificate, and the gateway-provided NTP server. The firmware resolves `.local` names through mDNS for both NTP and MQTT; TLS still checks the original `MQTT_HOST` against a DNS Subject Alternative Name on the Pi broker certificate. The ESP32 must be on a LAN that forwards mDNS multicast and allows local client-to-client traffic. Keep WROVER credentials separate from the Pi's CloudAMQP credentials. The default output pins are GPIO18 and GPIO19, with LOW as the startup and timeout safe level. Confirm the connected driver treats LOW as its safe state before enabling remote control; otherwise set `CONTROL_GPIO_SAFE_LEVEL` to the verified safe level in the ignored config.
+Edit the ignored `include/smart_factory_config.h` with the OT Wi-Fi SSID/password, the Pi gateway mDNS name (`smart-factory-gateway.local`) and TLS listener port (`8883`), a unique Mosquitto user/password, the CA that signed the Pi broker certificate, and the gateway-provided NTP server. The firmware resolves `.local` names through mDNS for both NTP and MQTT; TLS still checks the original `MQTT_HOST` against a DNS Subject Alternative Name on the Pi broker certificate. The ESP32 must be on a LAN that forwards mDNS multicast and allows local client-to-client traffic. Keep WROVER credentials separate from the Pi's CloudAMQP credentials. GPIO18 defaults LOW as the startup and timeout-safe control level. Confirm the connected driver treats LOW as its safe state before enabling remote control; otherwise set `CONTROL_GPIO_SAFE_LEVEL` to the verified safe level in the ignored config.
 
 ```bash
 pio run
@@ -25,7 +25,7 @@ On macOS the upload port is commonly `/dev/cu.usbserial-*`; on Linux it is commo
 
 ## DHT11 sensor wiring
 
-The firmware reads a DHT11 on GPIO32 by default (`DHT11_DATA_PIN` in `include/smart_factory_config.h`). GPIO32 is exposed on the ESP-WROVER-KIT header and is separate from the GPIO18/19 control outputs. Check the exact WROVER-KIT revision and board header labels before wiring.
+The firmware reads a DHT11 on GPIO32 by default (`DHT11_DATA_PIN` in `include/smart_factory_config.h`). GPIO32 is exposed on the ESP-WROVER-KIT header and is separate from the GPIO18 control output and GPIO19 indicator. Check the exact WROVER-KIT revision and board header labels before wiring.
 
 - Three-pin DHT11 module: connect `VCC` to `3V3`, `GND` to `GND`, and `DATA` to GPIO32. Confirm whether the module already includes a pull-up resistor.
 - Bare four-pin DHT11: identify the pins from its own datasheet/marking, then add a 4.7–10 kΩ pull-up between `DATA` and `3V3` unless the sensor board already includes one. Do not infer pin order from the front view alone.
@@ -35,12 +35,12 @@ Temperature is reported in °C and humidity in %RH every five seconds. If a read
 
 ## Bench LED and push-button wiring
 
-This profile reserves GPIO18 for a low-current indicator LED and GPIO21 for a momentary user button. Disconnect the optional LCD, camera, and microSD interfaces because these pins are shared on ESP-WROVER-KIT V4.1.
+This profile reserves GPIO19 for LED 2 and GPIO21 for a momentary user button. GPIO18 remains available for the separately controlled output. Disconnect the optional LCD, camera, and microSD interfaces because these pins are shared on ESP-WROVER-KIT V4.1.
 
-- LED: GPIO18 → 330 Ω series resistor → LED anode (long leg); LED cathode (short leg/flat side) → GND. The dashboard command lights it for at most two seconds, then firmware returns the output LOW.
+- LED 2: GPIO19 → 330 Ω series resistor → LED anode (long leg); LED cathode (short leg/flat side) → GND. It stays on while the button is held and turns off on release.
 - Button: GPIO21 → one button terminal; opposite terminal → GND. The firmware uses `INPUT_PULLUP`, so no external pull-up is required. A press is active LOW and is debounced in software.
 
-Telemetry includes numeric `assetSignals.buttonPressed` (`1` while held, otherwise `0`) and the monotonically increasing `assetSignals.buttonPressCount`. The dashboard uses the counter so a short press remains visible after release.
+Telemetry publishes immediately when the debounced button changes and includes numeric `assetSignals.buttonPressed` (`1` while held, otherwise `0`) and `assetSignals.buttonPressCount`. The counter is stored in ESP32 nonvolatile storage, survives restart and power loss, and resets only if the device's NVS/flash is erased. The dashboard displays the current Pressed/Released state and lifetime count.
 
 ## Network and broker security
 
@@ -55,9 +55,9 @@ The example uses MQTT/TLS on port 8883 with `WiFiClientSecure`, CA validation, a
 - Subscribe control requests: `factory/{site}/{line}/{deviceId}/commands`
 - Publish control acknowledgements: `factory/{site}/{line}/{deviceId}/control-ack`
 
-The accepted control payload is a JSON object with `schemaVersion: 1`, `action: "set_gpio"`, a unique `commandId`, `pin` (`18` or `19`), `value` (`0` or `1`), `holdMs` (1–2000), and UTC Unix-millisecond `expiresAt`. The firmware rejects unknown pins, malformed fields, expired requests, replayed command IDs, and requests before time sync. QoS 1 delivery can duplicate messages; command IDs prevent repeated pulses within the recent-ID cache. An `applied` acknowledgement confirms the GPIO level changed; it does not confirm the external machine moved or reached a safe state.
+The accepted control payload is a JSON object with `schemaVersion: 1`, `action: "set_gpio"`, a unique `commandId`, `pin: 18`, `value` (`0` or `1`), `holdMs` (1–2000), and UTC Unix-millisecond `expiresAt`. GPIO19 is reserved for LED 2 and is rejected as a remote-control target. The firmware rejects unknown pins, malformed fields, expired requests, replayed command IDs, and requests before time sync. QoS 1 delivery can duplicate messages; command IDs prevent repeated pulses within the recent-ID cache. An `applied` acknowledgement confirms the GPIO level changed; it does not confirm the external machine moved or reached a safe state.
 
-GPIO18 and GPIO19 are shared with optional camera/LCD interfaces on the ESP-WROVER-KIT. Disconnect those peripherals and verify the exact board revision and header before wiring. Outputs are 3.3 V logic only: connect them to compatible isolated driver inputs with an external bias that holds the machine input in its safe state during boot or loss of power. Never connect a motor, coil, mains, or industrial voltage directly to an ESP32 GPIO. Do not use these outputs for emergency stop, guarding, interlocks, or other protective functions; use independent safety-rated hardware.
+GPIO18 and GPIO19 are shared with optional camera/LCD interfaces on the ESP-WROVER-KIT. Disconnect those peripherals and verify the exact board revision and header before wiring. GPIO18 is 3.3 V logic only: connect it to a compatible isolated driver input with an external bias that holds the machine input in its safe state during boot or loss of power. GPIO19 may drive only the documented low-current LED through its resistor. Never connect a motor, coil, mains, or industrial voltage directly to an ESP32 GPIO. Do not use these outputs for emergency stop, guarding, interlocks, or other protective functions; use independent safety-rated hardware.
 
 The DHT11 is a basic, uncalibrated bench sensor and must not be used as a process instrument. The firmware uses ArduinoMqttClient to publish telemetry and heartbeat at QoS 1 and waits for the broker acknowledgement. The Pi subscriber uses a stable MQTT client ID, a persistent session, and a Mosquitto broker with persistence enabled so QoS 1 messages can queue during brief gateway process restarts. This is at-least-once delivery, so downstream consumers should tolerate duplicates; a power-loss-proof sensor-side spool is not implemented. The current dashboard exposes ADA031 V4 jogs from the asset AAS page when an ADA031 is configured. WROVER GPIO requests are validated and relayed in the Pi/firmware code, but a dashboard control panel for those outputs is not available in this release. Do not present GPIO pulses as speed control or emergency stop.
 

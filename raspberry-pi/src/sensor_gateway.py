@@ -28,7 +28,7 @@ except Exception:  # pragma: no cover
 
 STOP = Event()
 MAX_EPOCH_MILLISECONDS = 9_223_372_036_854_775_807
-WROVER_CONTROL_PINS = {18, 19}
+WROVER_CONTROL_PINS = {18}
 GPIO_COMMAND_FIELDS = {"schemaVersion", "action", "commandId", "targetDeviceId", "pin", "value", "holdMs", "expiresAt"}
 
 

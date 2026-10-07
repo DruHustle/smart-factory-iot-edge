@@ -5,6 +5,7 @@
 #include <MqttClient.h>
 #include <ArduinoJson.h>
 #include <DHT.h>
+#include <Preferences.h>
 #include <math.h>
 #include <time.h>
 #include <sys/time.h>
@@ -27,8 +28,8 @@
 #ifndef CONTROL_GPIO_PIN_1
 #define CONTROL_GPIO_PIN_1 18
 #endif
-#ifndef CONTROL_GPIO_PIN_2
-#define CONTROL_GPIO_PIN_2 19
+#ifndef BUTTON_LED_PIN
+#define BUTTON_LED_PIN 19
 #endif
 #ifndef CONTROL_GPIO_SAFE_LEVEL
 #define CONTROL_GPIO_SAFE_LEVEL 0
@@ -85,6 +86,8 @@ MqttClient mqttClient(plainWifiClient);
 #endif
 
 DHT dht11Sensor(DHT11_DATA_PIN, DHT11);
+Preferences buttonPreferences;
+bool buttonPreferencesReady = false;
 
 unsigned long lastPublishMs = 0;
 const unsigned long publishIntervalMs = 5000;
@@ -93,18 +96,18 @@ bool buttonPressed = false;
 bool lastRawButtonPressed = false;
 unsigned long buttonChangedAtMs = 0;
 uint32_t buttonPressCount = 0;
+bool buttonTelemetryPending = false;
 const unsigned long buttonDebounceMs = 40;
 
 // The selected ESP-WROVER-KIT GPIOs are shared with optional board peripherals.
 // Keep the compiled allowlist deliberately narrow; changing it requires a
 // board-level pinout review, not just a config edit.
 static_assert(DHT11_DATA_PIN == 32 || DHT11_DATA_PIN == 33, "DHT11 data pin must use the reviewed ESP-WROVER-KIT GPIO32/GPIO33 header pins");
-static_assert(DHT11_DATA_PIN != CONTROL_GPIO_PIN_1 && DHT11_DATA_PIN != CONTROL_GPIO_PIN_2, "DHT11 data pin cannot overlap a control output");
+static_assert(DHT11_DATA_PIN != CONTROL_GPIO_PIN_1 && DHT11_DATA_PIN != BUTTON_LED_PIN, "DHT11 data pin cannot overlap an output");
 static_assert(USER_BUTTON_PIN == 21, "The reviewed user-button input is GPIO21 on ESP-WROVER-KIT V4.1");
-static_assert(USER_BUTTON_PIN != DHT11_DATA_PIN && USER_BUTTON_PIN != CONTROL_GPIO_PIN_1 && USER_BUTTON_PIN != CONTROL_GPIO_PIN_2, "Button, DHT11, and control pins must be distinct");
-static_assert(CONTROL_GPIO_PIN_1 == 18 || CONTROL_GPIO_PIN_1 == 19, "Control GPIO 1 must be GPIO18 or GPIO19 on ESP-WROVER-KIT");
-static_assert(CONTROL_GPIO_PIN_2 == 18 || CONTROL_GPIO_PIN_2 == 19, "Control GPIO 2 must be GPIO18 or GPIO19 on ESP-WROVER-KIT");
-static_assert(CONTROL_GPIO_PIN_1 != CONTROL_GPIO_PIN_2, "Control GPIO pins must be different");
+static_assert(BUTTON_LED_PIN == 19, "The reviewed button LED output is GPIO19 on ESP-WROVER-KIT V4.1");
+static_assert(USER_BUTTON_PIN != DHT11_DATA_PIN && USER_BUTTON_PIN != CONTROL_GPIO_PIN_1 && USER_BUTTON_PIN != BUTTON_LED_PIN, "Button, DHT11, and output pins must be distinct");
+static_assert(CONTROL_GPIO_PIN_1 == 18, "The reviewed remote-control output is GPIO18 on ESP-WROVER-KIT");
 static_assert(CONTROL_GPIO_SAFE_LEVEL == LOW || CONTROL_GPIO_SAFE_LEVEL == HIGH, "CONTROL_GPIO_SAFE_LEVEL must be LOW or HIGH");
 static_assert(CONTROL_GPIO_MAX_HOLD_MS > 0 && CONTROL_GPIO_MAX_HOLD_MS <= 2000, "GPIO control pulses must be at most 2000 ms");
 
@@ -116,7 +119,6 @@ struct ControlOutput {
 
 ControlOutput controlOutputs[] = {
   {CONTROL_GPIO_PIN_1, false, 0},
-  {CONTROL_GPIO_PIN_2, false, 0},
 };
 
 String recentCommandIds[16];
@@ -152,6 +154,8 @@ void configureControlOutputs() {
     digitalWrite(output.pin, CONTROL_GPIO_SAFE_LEVEL);
     pinMode(output.pin, OUTPUT);
   }
+  digitalWrite(BUTTON_LED_PIN, LOW);
+  pinMode(BUTTON_LED_PIN, OUTPUT);
   pinMode(USER_BUTTON_PIN, INPUT_PULLUP);
 }
 
@@ -164,8 +168,13 @@ void pollUserButton() {
   }
   if (rawPressed != buttonPressed && now - buttonChangedAtMs >= buttonDebounceMs) {
     buttonPressed = rawPressed;
+    digitalWrite(BUTTON_LED_PIN, buttonPressed ? HIGH : LOW);
+    buttonTelemetryPending = true;
     if (buttonPressed) {
-      buttonPressCount++;
+      if (buttonPressCount < UINT32_MAX) {
+        buttonPressCount++;
+        if (buttonPreferencesReady) buttonPreferences.putULong("pressCount", buttonPressCount);
+      }
       Serial.printf("[BUTTON] GPIO%u pressed; count=%lu\n", USER_BUTTON_PIN, static_cast<unsigned long>(buttonPressCount));
     } else {
       Serial.printf("[BUTTON] GPIO%u released\n", USER_BUTTON_PIN);
@@ -419,6 +428,13 @@ void setup() {
   dht11Sensor.begin();
   Serial.printf("[DHT11] Sensor initialized on GPIO%u; readings publish every %lu ms\n", DHT11_DATA_PIN, publishIntervalMs);
   configureControlOutputs();
+  buttonPreferencesReady = buttonPreferences.begin("sf-button", false);
+  if (buttonPreferencesReady) {
+    buttonPressCount = buttonPreferences.getULong("pressCount", 0);
+    Serial.printf("[BUTTON] Restored lifetime press count=%lu\n", static_cast<unsigned long>(buttonPressCount));
+  } else {
+    Serial.println("[BUTTON] Could not open nonvolatile counter storage");
+  }
   mqttClient.onMessage(handleMqttMessage);
 
   connectWifi();
@@ -459,6 +475,11 @@ void loop() {
 
   mqttClient.poll();
   pollUserButton();
+  if (buttonTelemetryPending) {
+    buttonTelemetryPending = false;
+    lastPublishMs = millis();
+    publishTelemetry();
+  }
   resetExpiredControlOutputs();
 
   if (!clockReady && time(nullptr) > 1700000000) {
