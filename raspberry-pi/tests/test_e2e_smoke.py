@@ -24,6 +24,14 @@ def _install_dotenv_stub() -> None:
     sys.modules["dotenv"] = dotenv_mod
 
 
+class GatewayConfigurationTests(unittest.TestCase):
+    def test_asset_polling_defaults_to_subsecond_for_motion_telemetry(self):
+        _purge_modules("config")
+        with patch.dict("os.environ", {"EDGE_ENV": "development"}, clear=True):
+            from config import load_settings
+            self.assertEqual(load_settings().asset_poll_interval_seconds, 0.5)
+
+
 class FakeMqttClient:
     def __init__(self):
         self.published = []

@@ -28,7 +28,7 @@ class Settings:
 
     asset_config_file: str
     synthetic_telemetry_enabled: bool
-    asset_poll_interval_seconds: int
+    asset_poll_interval_seconds: float
 
     publish_interval_seconds: int
 
@@ -97,14 +97,14 @@ def load_settings() -> Settings:
         serial_baud=int(os.getenv("SERIAL_BAUD", "115200")),
         asset_config_file=os.getenv("ASSET_CONFIG_FILE", "/var/lib/smart-factory-iot/assets.json"),
         synthetic_telemetry_enabled=_as_bool(os.getenv("SYNTHETIC_TELEMETRY_ENABLED"), False),
-        asset_poll_interval_seconds=int(os.getenv("ASSET_POLL_INTERVAL_SECONDS", os.getenv("PUBLISH_INTERVAL_SECONDS", "5"))),
+        asset_poll_interval_seconds=float(os.getenv("ASSET_POLL_INTERVAL_SECONDS", "0.5")),
         publish_interval_seconds=int(os.getenv("PUBLISH_INTERVAL_SECONDS", "5")),
     )
     import re
     if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value) for value in
            (settings.device_id, settings.site_id, settings.line_id, *settings.local_mqtt_device_ids)):
         raise RuntimeError("MQTT identities must be safe topic segments")
-    if settings.publish_interval_seconds < 1 or settings.asset_poll_interval_seconds < 1 or settings.max_queued_messages < 1:
+    if settings.publish_interval_seconds < 1 or settings.asset_poll_interval_seconds <= 0 or settings.max_queued_messages < 1:
         raise RuntimeError("Polling intervals and delivery queue capacity must be positive")
     if settings.environment == "production":
         if not settings.state_dir or settings.synthetic_telemetry_enabled:

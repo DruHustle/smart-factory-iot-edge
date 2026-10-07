@@ -24,6 +24,10 @@ unsigned long lastCalibrationTelemetry = 0;
 unsigned long lastOledRefresh = 0;
 unsigned long lastPeriodicTelemetry = 0;
 const unsigned long PERIODIC_TELEMETRY_MS = 2000;
+// At 9600 baud a full JSON sample takes significant time to transmit. One
+// in-motion update per second keeps the UI live without flooding serial or
+// materially changing the commanded 20 ms servo step cadence.
+const unsigned long MOVEMENT_TELEMETRY_MS = 1000;
 
 enum Program { IDLE, PICK_AND_PLACE, DEMONSTRATION };
 Program program = IDLE;
@@ -135,6 +139,10 @@ void publishTelemetry() {
   lastPeriodicTelemetry = millis();
 }
 
+void publishMovementTelemetryIfDue() {
+  if (movementActive && millis() - lastPeriodicTelemetry >= MOVEMENT_TELEMETRY_MS) publishTelemetry();
+}
+
 void readPotentiometers() {
   // The ArmBoard pots are electrically reversed: fully counter-clockwise reads
   // near 1023, while fully clockwise reads near 0.
@@ -239,6 +247,7 @@ bool moveTo(const byte pose[5]) {
         if (target[axis] < desired) target[axis]++;
         else target[axis]--;
         servos[axis].write(target[axis]);
+        publishMovementTelemetryIfDue();
         pollStop();
         delay(20);
       }
@@ -261,6 +270,7 @@ bool moveTo(const byte pose[5]) {
         else if (target[i] > desired) { target[i]--; moving = true; }
         servos[i].write(target[i]);
       }
+      publishMovementTelemetryIfDue();
       delay(20);
     }
   }
