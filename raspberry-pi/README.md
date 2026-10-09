@@ -6,7 +6,7 @@ Gateway dependencies and their resolved transitive versions are pinned in `requi
 
 ## Relationship to the cloud deployment
 
-The React UI runs on Vercel. One reviewed, non-root backend image is deployed as two Render services: the scalable web role runs the Node API plus Device, Identity and Analytics services, while the singleton worker role runs Telemetry and Notification services. Managed databases, Redis, messaging and company AAS services remain external. The Raspberry Pi stays in the factory and runs the systemd service below. ESP32 WROVER firmware is built and uploaded over USB with PlatformIO; the ADA031 V4 controller uses its USB/Arduino workflow. The Pi publishes upstream to CloudAMQP MQTT over TLS using its own gateway identity. See the dashboard's [local and Vercel/Render guide](https://github.com/DruHustle/smart-factory-iot/blob/main/RENDER_DEPLOYMENT.md) and the edge [deployment index](../README.md). Kubernetes is unnecessary.
+The React UI runs on Vercel. One reviewed, non-root backend image is deployed as two Render services: the scalable web role runs the Node API plus Device, Identity and Analytics services, while the singleton worker role runs Telemetry and Notification services. Managed databases, Redis, messaging and company AAS services remain external. The Raspberry Pi stays in the factory and runs the systemd service below. ESP32 WROVER firmware is built and uploaded over USB with PlatformIO; the ADA031 V4 controller uses its USB/Arduino workflow. The Pi publishes upstream to CloudAMQP MQTT over TLS using its own gateway identity. See the dashboard's [local and Vercel/Render guide](https://github.com/DruHustle/smart-factory-iot-frontend/blob/main/RENDER_DEPLOYMENT.md) and the edge [deployment index](../README.md). Kubernetes is unnecessary.
 
 ## Manual install
 
@@ -156,7 +156,7 @@ For a workstation integration run, start services in this order from separate te
 
 ```bash
 # Dashboard repository: PostgreSQL, Redis, Nginx, BaSyx repositories and registries
-cd ../smart-factory-iot
+cd ../smart-factory-iot-frontend
 docker compose --profile aas up -d --build --wait
 
 # Backend repository: backend PostgreSQL, RabbitMQ (AMQP/MQTT), and .NET services
